@@ -50,6 +50,7 @@ type FeatureFlags interface {
 	FeatureOffchainReporting() bool
 	FeatureOffchainReporting2() bool
 	FeatureUICSAKeys() bool
+	FeatureVRFBatchFulfillments() bool
 
 	AutoPprofEnabled() bool
 	EVMEnabled() bool
@@ -521,6 +522,10 @@ func (c *generalConfig) ClientNodeURL() string {
 // FeatureUICSAKeys enables the CSA Keys UI Feature.
 func (c *generalConfig) FeatureUICSAKeys() bool {
 	return c.getWithFallback("FeatureUICSAKeys", parse.Bool).(bool)
+}
+
+func (c *generalConfig) FeatureVRFBatchFulfillments() bool {
+	return c.getWithFallback("FeatureVRFBatchFulfillments", parse.Bool).(bool)
 }
 
 func (c *generalConfig) DatabaseListenerMinReconnectInterval() time.Duration {

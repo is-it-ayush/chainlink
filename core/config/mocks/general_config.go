@@ -827,6 +827,20 @@ func (_m *GeneralConfig) FeatureUICSAKeys() bool {
 	return r0
 }
 
+// FeatureVRFBatchFulfillments provides a mock function with given fields:
+func (_m *GeneralConfig) FeatureVRFBatchFulfillments() bool {
+	ret := _m.Called()
+
+	var r0 bool
+	if rf, ok := ret.Get(0).(func() bool); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	return r0
+}
+
 // GetAdvisoryLockIDConfiguredOrDefault provides a mock function with given fields:
 func (_m *GeneralConfig) GetAdvisoryLockIDConfiguredOrDefault() int64 {
 	ret := _m.Called()

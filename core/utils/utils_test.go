@@ -474,3 +474,12 @@ func Test_StartStopOnce_MultipleStartNoBlock(t *testing.T) {
 	require.Equal(t, 3, <-ch) // 3 arrives before 2 because it returns immediately
 	require.Equal(t, 2, <-ch)
 }
+
+func TestSumSlice(t *testing.T) {
+	s := []uint64{1, 2, 3, 4, 5}
+	expected := uint64(15)
+	require.Equal(t, expected, utils.SumSlice(s))
+	s = []uint64{}
+	expected = 0
+	require.Equal(t, expected, utils.SumSlice(s))
+}

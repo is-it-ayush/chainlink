@@ -103,14 +103,15 @@ type GeneralConfigOverrides struct {
 	LinkContractAddress                       null.String
 
 	// Feature Flags
-	FeatureExternalInitiators null.Bool
-	FeatureFeedsManager       null.Bool
-	FeatureOffchainReporting  null.Bool
-	FeatureOffchainReporting2 null.Bool
-	EVMEnabled                null.Bool
-	EVMRPCEnabled             null.Bool
-	TerraEnabled              null.Bool
-	P2PEnabled                null.Bool
+	FeatureExternalInitiators   null.Bool
+	FeatureFeedsManager         null.Bool
+	FeatureOffchainReporting    null.Bool
+	FeatureOffchainReporting2   null.Bool
+	EVMEnabled                  null.Bool
+	EVMRPCEnabled               null.Bool
+	TerraEnabled                null.Bool
+	P2PEnabled                  null.Bool
+	FeatureVRFBatchFulfillments null.Bool
 
 	// OCR v2
 	OCR2DatabaseTimeout *time.Duration

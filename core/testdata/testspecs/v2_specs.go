@@ -242,6 +242,7 @@ type VRFSpecParams struct {
 	JobID                    string
 	Name                     string
 	CoordinatorAddress       string
+	BatchCoordinatorAddress  string
 	MinIncomingConfirmations int
 	FromAddresses            []string
 	PublicKey                string
@@ -340,6 +341,7 @@ type = "vrf"
 schemaVersion = 1
 name = "%s"
 coordinatorAddress = "%s"
+batchCoordinatorAddress = "%s"
 minIncomingConfirmations = %d
 requestedConfsDelay = %d
 requestTimeout = "%s"
@@ -348,7 +350,7 @@ observationSource = """
 %s
 """
 `
-	toml := fmt.Sprintf(template, jobID, name, coordinatorAddress, confirmations, params.RequestedConfsDelay,
+	toml := fmt.Sprintf(template, jobID, name, coordinatorAddress, params.BatchCoordinatorAddress, confirmations, params.RequestedConfsDelay,
 		requestTimeout.String(), publicKey, observationSource)
 	if len(params.FromAddresses) != 0 {
 		var addresses []string
@@ -362,6 +364,7 @@ observationSource = """
 		JobID:                    jobID,
 		Name:                     name,
 		CoordinatorAddress:       coordinatorAddress,
+		BatchCoordinatorAddress:  params.BatchCoordinatorAddress,
 		MinIncomingConfirmations: confirmations,
 		PublicKey:                publicKey,
 		ObservationSource:        observationSource,

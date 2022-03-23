@@ -32,6 +32,7 @@ import (
 	"github.com/smartcontractkit/chainlink/core/chains/evm/types"
 	"github.com/smartcontractkit/chainlink/core/internal/cltest"
 	"github.com/smartcontractkit/chainlink/core/internal/cltest/heavyweight"
+	"github.com/smartcontractkit/chainlink/core/internal/gethwrappers/generated/batch_vrf_coordinator_v2"
 	"github.com/smartcontractkit/chainlink/core/internal/gethwrappers/generated/blockhash_store"
 	"github.com/smartcontractkit/chainlink/core/internal/gethwrappers/generated/link_token_interface"
 	"github.com/smartcontractkit/chainlink/core/internal/gethwrappers/generated/mock_v3_aggregator_contract"
@@ -75,6 +76,8 @@ type coordinatorV2Universe struct {
 
 	rootContract                     *vrf_coordinator_v2.VRFCoordinatorV2
 	rootContractAddress              common.Address
+	batchCoordinatorContract         *batch_vrf_coordinator_v2.BatchVRFCoordinatorV2
+	batchCoordinatorContractAddress  common.Address
 	linkContract                     *link_token_interface.LinkToken
 	linkContractAddress              common.Address
 	bhsContract                      *blockhash_store.BlockhashStore
@@ -162,7 +165,15 @@ func newVRFCoordinatorV2Universe(t *testing.T, key ethkey.KeyV2, numConsumers in
 	coordinatorAddress, _, coordinatorContract, err :=
 		vrf_coordinator_v2.DeployVRFCoordinatorV2(
 			neil, backend, linkAddress, bhsAddress, linkEthFeed /* linkEth*/)
-	require.NoError(t, err, "failed to deploy VRFCoordinator contract to simulated ethereum blockchain")
+	require.NoError(t, err, "failed to deploy VRFCoordinatorV2 contract to simulated ethereum blockchain")
+	backend.Commit()
+
+	// Deploy batch VRF V2 coordinator
+	batchCoordinatorAddress, _, batchCoordinatorContract, err :=
+		batch_vrf_coordinator_v2.DeployBatchVRFCoordinatorV2(
+			neil, backend, coordinatorAddress,
+		)
+	require.NoError(t, err, "failed to deploy BatchVRFCoordinatorV2 contract to simulated ethereum blockchain")
 	backend.Commit()
 
 	// Create the VRF consumers.
@@ -227,6 +238,9 @@ func newVRFCoordinatorV2Universe(t *testing.T, key ethkey.KeyV2, numConsumers in
 		vrfConsumers:              vrfConsumers,
 		consumerContracts:         consumerContracts,
 		consumerContractAddresses: consumerContractAddresses,
+
+		batchCoordinatorContract:        batchCoordinatorContract,
+		batchCoordinatorContractAddress: batchCoordinatorAddress,
 
 		revertingConsumerContract:        revertingConsumerContract,
 		revertingConsumerContractAddress: revertingConsumerContractAddress,
@@ -310,6 +324,7 @@ func createVRFJobs(t *testing.T, fromKeys [][]ethkey.KeyV2, app *cltest.TestAppl
 			JobID:                    jid.String(),
 			Name:                     fmt.Sprintf("vrf-primary-%d", i),
 			CoordinatorAddress:       uni.rootContractAddress.String(),
+			BatchCoordinatorAddress:  uni.batchCoordinatorContractAddress.String(),
 			MinIncomingConfirmations: incomingConfs,
 			PublicKey:                vrfkey.PublicKey.String(),
 			FromAddresses:            keyStrs,
@@ -480,6 +495,71 @@ func mine(t *testing.T, requestID *big.Int, subID uint64, uni coordinatorV2Unive
 		t.Log("num txs", len(txs))
 		return len(txs) == 1
 	}, cltest.WaitTimeout(t), time.Second).Should(gomega.BeTrue())
+}
+
+func TestVRFV2Integration_SingleConsumer_HappyPath_BatchFulfillment(t *testing.T) {
+	config, db := heavyweight.FullTestDB(t, "vrfv2_singleconsumer_batch_happypath", true, true)
+	ownerKey := cltest.MustGenerateRandomKey(t)
+	uni := newVRFCoordinatorV2Universe(t, ownerKey, 1)
+	config.Overrides.FeatureVRFBatchFulfillments = null.NewBool(true, true)
+	app := cltest.NewApplicationWithConfigAndKeyOnSimulatedBlockchain(t, config, uni.backend, ownerKey)
+	config.Overrides.GlobalEvmGasLimitDefault = null.NewInt(0, false)
+	config.Overrides.GlobalMinIncomingConfirmations = null.IntFrom(2)
+	consumer := uni.vrfConsumers[0]
+	consumerContract := uni.consumerContracts[0]
+	consumerContractAddress := uni.consumerContractAddresses[0]
+
+	// Create a subscription and fund with 5 LINK.
+	subID := subscribeAndAssertSubscriptionCreatedEvent(t, consumerContract, consumer, consumerContractAddress, big.NewInt(5e18), uni)
+
+	// Create gas lane.
+	key1, err := app.KeyStore.Eth().Create(big.NewInt(1337))
+	require.NoError(t, err)
+	sendEth(t, ownerKey, uni.backend, key1.Address.Address(), 10)
+	configureSimChain(t, app, map[string]types.ChainCfg{
+		key1.Address.String(): {
+			EvmMaxGasPriceWei: utils.NewBig(big.NewInt(10e9)), // 10 gwei
+		},
+	}, big.NewInt(10e9))
+	require.NoError(t, app.Start(testutils.Context(t)))
+
+	// Create VRF job using key1 and key2 on the same gas lane.
+	jbs := createVRFJobs(t, [][]ethkey.KeyV2{{key1}}, app, uni)
+	keyHash := jbs[0].VRFSpec.PublicKey.MustHash()
+
+	// Make some randomness requests.
+	numWords := uint32(2)
+	reqIDs := []*big.Int{}
+	for i := 0; i < vrf.FulfillmentBatchSize; i++ {
+		requestID, _ := requestRandomnessAndAssertRandomWordsRequestedEvent(t, consumerContract, consumer, keyHash, subID, numWords, uni)
+		reqIDs = append(reqIDs, requestID)
+	}
+
+	// Wait for fulfillment to be queued.
+	gomega.NewGomegaWithT(t).Eventually(func() bool {
+		uni.backend.Commit()
+		runs, err := app.PipelineORM().GetAllRuns()
+		require.NoError(t, err)
+		t.Log("runs", len(runs))
+		return len(runs) == 4
+	}, cltest.WaitTimeout(t), time.Second).Should(gomega.BeTrue())
+
+	for _, requestID := range reqIDs {
+		// Mine the fulfillment that was queued.
+		mine(t, requestID, subID, uni, db)
+		// Assert correct state of RandomWordsFulfilled event.
+		assertRandomWordsFulfilled(t, requestID, true, uni)
+	}
+
+	// Assert correct number of random words sent by coordinator.
+	assertNumRandomWords(t, consumerContract, numWords)
+
+	// Assert that both send addresses were used to fulfill the requests
+	n, err := uni.backend.PendingNonceAt(context.Background(), key1.Address.Address())
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n)
+
+	t.Log("Done!")
 }
 
 func TestVRFV2Integration_SingleConsumer_HappyPath(t *testing.T) {

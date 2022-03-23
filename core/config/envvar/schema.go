@@ -274,6 +274,9 @@ type ConfigSchema struct {
 	ClientNodeURL        string `env:"CLIENT_NODE_URL" default:"http://localhost:6688"`
 	InsecureSkipVerify   bool   `env:"INSECURE_SKIP_VERIFY" default:"false"`
 
+	// VRF
+	VRFBatchFulfillmentsFeatureEnabled bool `env:"VRF_BATCH_FULFILLMENTS_FEATURE_ENABLED" default:"false"`
+
 	// Debugging
 	AutoPprofEnabled              bool            `env:"AUTO_PPROF_ENABLED" default:"false"`            //nodoc
 	AutoPprofProfileRoot          string          `env:"AUTO_PPROF_PROFILE_ROOT"`                       //nodoc (defaults to $CHAINLINK_ROOT)

@@ -1005,3 +1005,12 @@ func BoxOutput(errorMsgTemplate string, errorMsgValues ...interface{}) string {
 	return "\n" + output + "↗" + strings.Repeat("↑", internalLength) + "↖" + // bottom line
 		"\n\n"
 }
+
+// SumSlice returns the sum of the given slice.
+// No overflow checking is done.
+func SumSlice(s []uint64) (r uint64) {
+	for _, e := range s {
+		r += e
+	}
+	return
+}
