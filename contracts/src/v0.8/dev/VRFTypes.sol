@@ -8,7 +8,7 @@ pragma solidity 0.8.6;
  */
 library VRFTypes {
   // ABI-compatible with VRF.Proof.
-  // This proof is used for both VRF V1 and V2.
+  // This proof is used for VRF V2.
   struct Proof {
     uint256[2] pk;
     uint256[2] gamma;

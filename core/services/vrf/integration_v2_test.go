@@ -497,13 +497,46 @@ func mine(t *testing.T, requestID *big.Int, subID uint64, uni coordinatorV2Unive
 	}, cltest.WaitTimeout(t), time.Second).Should(gomega.BeTrue())
 }
 
+func mineBatch(t *testing.T, requestIDs []*big.Int, subID uint64, uni coordinatorV2Universe, db *sqlx.DB) bool {
+	requestIDMap := map[string]bool{}
+	for _, requestID := range requestIDs {
+		requestIDMap[common.BytesToHash(requestID.Bytes()).String()] = false
+	}
+	return gomega.NewWithT(t).Eventually(func() bool {
+		uni.backend.Commit()
+		var txs []txmgr.EthTx
+		err := db.Select(&txs, `
+		SELECT * FROM eth_txes
+		WHERE eth_txes.state = 'confirmed'
+			AND CAST(eth_txes.meta->>'SubId' AS NUMERIC) = $1
+		`, subID)
+		require.NoError(t, err)
+		for _, tx := range txs {
+			meta, err := tx.GetMeta()
+			require.NoError(t, err)
+			t.Log("meta:", meta)
+			for _, requestID := range meta.RequestIDs {
+				if _, ok := requestIDMap[requestID.String()]; ok {
+					requestIDMap[requestID.String()] = true
+				}
+			}
+		}
+		foundAll := true
+		for _, found := range requestIDMap {
+			foundAll = foundAll && found
+		}
+		t.Log("requestIDMap:", requestIDMap)
+		return foundAll
+	}, cltest.WaitTimeout(t), time.Second).Should(gomega.BeTrue())
+}
+
 func TestVRFV2Integration_SingleConsumer_HappyPath_BatchFulfillment(t *testing.T) {
 	config, db := heavyweight.FullTestDB(t, "vrfv2_singleconsumer_batch_happypath", true, true)
 	ownerKey := cltest.MustGenerateRandomKey(t)
 	uni := newVRFCoordinatorV2Universe(t, ownerKey, 1)
-	config.Overrides.FeatureVRFBatchFulfillments = null.NewBool(true, true)
+	config.Overrides.VRFBatchFulfillmentsFeatureEnabled = null.BoolFrom(true)
 	app := cltest.NewApplicationWithConfigAndKeyOnSimulatedBlockchain(t, config, uni.backend, ownerKey)
-	config.Overrides.GlobalEvmGasLimitDefault = null.NewInt(0, false)
+	config.Overrides.GlobalEvmGasLimitDefault = null.NewInt(5e6, true)
 	config.Overrides.GlobalMinIncomingConfirmations = null.IntFrom(2)
 	consumer := uni.vrfConsumers[0]
 	consumerContract := uni.consumerContracts[0]
@@ -530,7 +563,7 @@ func TestVRFV2Integration_SingleConsumer_HappyPath_BatchFulfillment(t *testing.T
 	// Make some randomness requests.
 	numWords := uint32(2)
 	reqIDs := []*big.Int{}
-	for i := 0; i < vrf.FulfillmentBatchSize; i++ {
+	for i := 0; i < 5; i++ {
 		requestID, _ := requestRandomnessAndAssertRandomWordsRequestedEvent(t, consumerContract, consumer, keyHash, subID, numWords, uni)
 		reqIDs = append(reqIDs, requestID)
 	}
@@ -541,25 +574,24 @@ func TestVRFV2Integration_SingleConsumer_HappyPath_BatchFulfillment(t *testing.T
 		runs, err := app.PipelineORM().GetAllRuns()
 		require.NoError(t, err)
 		t.Log("runs", len(runs))
-		return len(runs) == 4
+		return len(runs) == 5
 	}, cltest.WaitTimeout(t), time.Second).Should(gomega.BeTrue())
 
-	for _, requestID := range reqIDs {
-		// Mine the fulfillment that was queued.
-		mine(t, requestID, subID, uni, db)
+	mineBatch(t, reqIDs, subID, uni, db)
+
+	for i, requestID := range reqIDs {
 		// Assert correct state of RandomWordsFulfilled event.
-		assertRandomWordsFulfilled(t, requestID, true, uni)
+		// The last request will be the successful one because of the way the example
+		// contract is written.
+		if i == (len(reqIDs) - 1) {
+			assertRandomWordsFulfilled(t, requestID, true, uni)
+		} else {
+			assertRandomWordsFulfilled(t, requestID, false, uni)
+		}
 	}
 
 	// Assert correct number of random words sent by coordinator.
 	assertNumRandomWords(t, consumerContract, numWords)
-
-	// Assert that both send addresses were used to fulfill the requests
-	n, err := uni.backend.PendingNonceAt(context.Background(), key1.Address.Address())
-	require.NoError(t, err)
-	require.EqualValues(t, 1, n)
-
-	t.Log("Done!")
 }
 
 func TestVRFV2Integration_SingleConsumer_HappyPath(t *testing.T) {

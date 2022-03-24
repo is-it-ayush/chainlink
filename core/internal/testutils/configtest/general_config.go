@@ -103,15 +103,15 @@ type GeneralConfigOverrides struct {
 	LinkContractAddress                       null.String
 
 	// Feature Flags
-	FeatureExternalInitiators   null.Bool
-	FeatureFeedsManager         null.Bool
-	FeatureOffchainReporting    null.Bool
-	FeatureOffchainReporting2   null.Bool
-	EVMEnabled                  null.Bool
-	EVMRPCEnabled               null.Bool
-	TerraEnabled                null.Bool
-	P2PEnabled                  null.Bool
-	FeatureVRFBatchFulfillments null.Bool
+	FeatureExternalInitiators          null.Bool
+	FeatureFeedsManager                null.Bool
+	FeatureOffchainReporting           null.Bool
+	FeatureOffchainReporting2          null.Bool
+	EVMEnabled                         null.Bool
+	EVMRPCEnabled                      null.Bool
+	TerraEnabled                       null.Bool
+	P2PEnabled                         null.Bool
+	VRFBatchFulfillmentsFeatureEnabled null.Bool
 
 	// OCR v2
 	OCR2DatabaseTimeout *time.Duration
@@ -288,6 +288,13 @@ func (c *TestGeneralConfig) TerraEnabled() bool {
 		return c.Overrides.TerraEnabled.Bool
 	}
 	return c.GeneralConfig.TerraEnabled()
+}
+
+func (c *TestGeneralConfig) VRFBatchFulfillmentsFeatureEnabled() bool {
+	if c.Overrides.VRFBatchFulfillmentsFeatureEnabled.Valid {
+		return c.Overrides.VRFBatchFulfillmentsFeatureEnabled.Bool
+	}
+	return c.GeneralConfig.VRFBatchFulfillmentsFeatureEnabled()
 }
 
 func (c *TestGeneralConfig) EthereumURL() string {

@@ -50,7 +50,7 @@ type FeatureFlags interface {
 	FeatureOffchainReporting() bool
 	FeatureOffchainReporting2() bool
 	FeatureUICSAKeys() bool
-	FeatureVRFBatchFulfillments() bool
+	VRFBatchFulfillmentsFeatureEnabled() bool
 
 	AutoPprofEnabled() bool
 	EVMEnabled() bool
@@ -524,8 +524,8 @@ func (c *generalConfig) FeatureUICSAKeys() bool {
 	return c.getWithFallback("FeatureUICSAKeys", parse.Bool).(bool)
 }
 
-func (c *generalConfig) FeatureVRFBatchFulfillments() bool {
-	return c.getWithFallback("FeatureVRFBatchFulfillments", parse.Bool).(bool)
+func (c *generalConfig) VRFBatchFulfillmentsFeatureEnabled() bool {
+	return c.getWithFallback("VRFBatchFulfillmentsFeatureEnabled", parse.Bool).(bool)
 }
 
 func (c *generalConfig) DatabaseListenerMinReconnectInterval() time.Duration {

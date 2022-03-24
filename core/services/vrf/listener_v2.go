@@ -46,15 +46,44 @@ const (
 		4800 + // request delete refund (refunds happen after execution), note pre-london fork was 15k. See https://eips.ethereum.org/EIPS/eip-3529
 		6685 // Positive static costs of argument encoding etc. note that it varies by +/- x*12 for every x bytes of non-zero data in the proof.
 
-	// FulfillmentBatchSize is the maximum amount of fulfillments to do in a single
-	// batch. Since max callback gas limit is 2.5M, a batch size of 4 is 10M, which
-	// can still get included on chains with lower block gas limits.
-	FulfillmentBatchSize = 4
+	// DefaultBatchFulfillmentGasLimit is the default maximum amount of gas we
+	// are able to supply to the batch fulfillRandomWords function.
+	DefaultBatchFulfillmentGasLimit uint64 = 2.5e6
 )
 
 var (
 	batchCoordinatorV2ABI = evmtypes.MustGetABI(batch_vrf_coordinator_v2.BatchVRFCoordinatorV2ABI)
+
+	// BatchFulfillmentGasLimit is the maximum amount of gas we are able to supply
+	// to the batch fulfillRandomWords function depending on the chain.
+	BatchFulfillmentGasLimit = map[*big.Int]uint64{
+		// Ethereum block gas limit: 12.5e6
+		big.NewInt(1): 3e6, // ethereum mainnet
+		big.NewInt(4): 3e6, // rinkeby testnet
+
+		// BSC block gas limit: 30e6
+		big.NewInt(56): 5e6, // binance smart chain mainnet
+		big.NewInt(97): 5e6, // binance smart chain testnet
+
+		// Polygon block gas limit: 30e6.
+		big.NewInt(137):   5e6, // polygon mainnet
+		big.NewInt(80001): 5e6, // polygon testnet
+
+		// Avalanche block gas limit: 8e6
+		big.NewInt(43114): 2.5e6, // avalanche c-chain
+		big.NewInt(43113): 2.5e6, // avalanche fuji testnet
+
+		// Fantom block gas limit: not sure - nothing on ftmscan.
+	}
 )
+
+func getBlockGasLimit(chainID *big.Int) (blockGasLimit uint64) {
+	blockGasLimit, ok := BatchFulfillmentGasLimit[chainID]
+	if !ok {
+		return DefaultBatchFulfillmentGasLimit
+	}
+	return blockGasLimit
+}
 
 type pendingRequest struct {
 	confirmedAtBlock uint64
@@ -333,19 +362,22 @@ func (lsn *listenerV2) processRequestsPerSubBatch(
 		return processed
 	}
 
+	blockGasLimit := getBlockGasLimit(lsn.ethClient.ChainID())
 	lggr := lsn.l.With(
 		"subID", reqs[0].req.SubId,
 		"reqs", len(reqs),
 		"startBalance", startBalance.String(),
 		"startBalanceNoReservedLink", startBalanceNoReserveLink.String(),
+		"blockGasLimit", blockGasLimit,
 	)
 	lggr.Infow("Processing requests for subscription with batching")
 
-	// loop through the pending requests in batches of size FulfillmentBatchSize
-	for i := 0; i < len(reqs); i += FulfillmentBatchSize {
-		j := i + FulfillmentBatchSize
-		if j > len(reqs) {
-			j = len(reqs)
+	// Group as many requests as we can that can fit inside the blockGasLimit.
+	// We simulate each fulfillment separately before enqueuing a batch fulfillment.
+	i := 0
+	for {
+		if i >= len(reqs) {
+			break
 		}
 
 		fromAddress, err := lsn.gethks.GetRoundRobinAddress(lsn.fromAddresses()...)
@@ -357,11 +389,13 @@ func (lsn *listenerV2) processRequestsPerSubBatch(
 
 		proofs := []batch_vrf_coordinator_v2.VRFTypesProof{}
 		commitments := []batch_vrf_coordinator_v2.VRFTypesRequestCommitment{}
-		gaslimits := []uint64{}
+		totalGasLimit := uint64(0)
 		runs := []pipeline.Run{}
 		reqIDs := []*big.Int{}
 		lbs := []log.Broadcast{}
-		for _, req := range reqs[i:j] {
+		maxLinks := []interface{}{}
+		for ; i < len(reqs); i++ {
+			req := reqs[i]
 			vrfRequest := req.req
 			rlog := lggr.With(
 				"reqID", vrfRequest.RequestId.String(),
@@ -390,9 +424,19 @@ func (lsn *listenerV2) processRequestsPerSubBatch(
 				continue
 			}
 
-			// Check if the vrf req has already been fulfilled
-			// If so we just mark it completed
-			callback, err := lsn.coordinator.GetCommitment(nil, vrfRequest.RequestId)
+			// Check if the vrf req has already been fulfilled.
+			// Pass max(request.BlockNumber, currentBlockNumber) to the call to ensure we get
+			// the latest state or an error.
+			// This is to avoid a race condition where a request commitment has been written on-chain
+			// but has not been synced fully on the entire network. GetCommitment will return an empty
+			// byte array in that case, and we would think that the request is fulfilled when it actually
+			// isn't.
+			reqBlockNumber := new(big.Int).SetUint64(vrfRequest.Raw.BlockNumber)
+			currBlock := new(big.Int).SetUint64(lsn.getLatestHead())
+			m := bigmath.Max(reqBlockNumber, currBlock)
+			callback, err := lsn.coordinator.GetCommitment(&bind.CallOpts{
+				BlockNumber: m,
+			}, vrfRequest.RequestId)
 			if err != nil {
 				rlog.Errorw("Unable to check if already fulfilled, processing anyways", "err", err)
 			} else if utils.IsEmpty(callback[:]) {
@@ -417,14 +461,22 @@ func (lsn *listenerV2) processRequestsPerSubBatch(
 				break
 			}
 
+			// check if we've exceeded the block gas limit.
+			// if we have, we should break here and re-process this request in the next
+			// batch.
+			if (totalGasLimit + gaslimit) > blockGasLimit {
+				break
+			}
+
 			proofs = append(proofs, batch_vrf_coordinator_v2.VRFTypesProof(pf))
 			commitments = append(commitments, batch_vrf_coordinator_v2.VRFTypesRequestCommitment(rc))
-			gaslimits = append(gaslimits, gaslimit)
 			runs = append(runs, run)
 			reqIDs = append(reqIDs, vrfRequest.RequestId)
 			lbs = append(lbs, req.lb)
+			maxLinks = append(maxLinks, maxLink)
+			totalGasLimit += gaslimit
 
-			startBalanceNoReserveLink = startBalanceNoReserveLink.Sub(startBalanceNoReserveLink, maxLink)
+			startBalanceNoReserveLink.Sub(startBalanceNoReserveLink, maxLink)
 		}
 
 		// Enqueue a single batch tx for requests that we're able to fulfill based on whether
@@ -437,8 +489,12 @@ func (lsn *listenerV2) processRequestsPerSubBatch(
 			continue
 		}
 
-		lggr.Infow("Enqueueing batch fulfillment", "requestIDs", reqIDs)
-		totalGasLimit := utils.SumSlice(gaslimits)
+		lggr.Infow("Enqueueing batch fulfillment",
+			"numRequestsInBatch", len(reqIDs),
+			"requestIDs", reqIDs,
+			"totalGasLimit", totalGasLimit,
+			"linkBalance", startBalanceNoReserveLink,
+		)
 		err = lsn.q.Transaction(func(tx pg.Queryer) error {
 			for _, run := range runs {
 				if err = lsn.pipelineRunner.InsertFinishedRun(&run, true, pg.WithQueryer(tx)); err != nil {
@@ -452,6 +508,11 @@ func (lsn *listenerV2) processRequestsPerSubBatch(
 				}
 			}
 
+			maxLinkStr := bigmath.Accumulate(maxLinks).String()
+			reqIDHashes := []common.Hash{}
+			for _, reqID := range reqIDs {
+				reqIDHashes = append(reqIDHashes, common.BytesToHash(reqID.Bytes()))
+			}
 			_, err = lsn.txm.CreateEthTransaction(txmgr.NewTx{
 				FromAddress:      fromAddress,
 				ToAddress:        lsn.batchCoordinator.Address(),
@@ -459,13 +520,12 @@ func (lsn *listenerV2) processRequestsPerSubBatch(
 				GasLimit:         totalGasLimit,
 				MinConfirmations: null.Uint32From(uint32(lsn.cfg.MinRequiredOutgoingConfirmations())),
 				Strategy:         txmgr.NewSendEveryStrategy(),
-				// TODO: need to figure out the below, the tx meta is
-				// required to see how much link we have "reserved".
-				// Meta: &txmgr.EthTxMeta{
-				// 	RequestID: common.BytesToHash(vrfRequest.RequestId.Bytes()),
-				// 	MaxLink:   maxLink.String(),
-				// 	SubID:     vrfRequest.SubId,
-				// },
+				Meta: &txmgr.EthTxMeta{
+					RequestIDs: reqIDHashes,
+					MaxLink:    &maxLinkStr,
+					SubID:      &subID,
+				},
+				// TODO: implement checker for batches.
 				// Checker: txmgr.TransmitCheckerSpec{
 				// 	CheckerType:           txmgr.TransmitCheckerTypeVRFV2,
 				// 	VRFCoordinatorAddress: lsn.coordinator.Address(),
@@ -500,7 +560,7 @@ func (lsn *listenerV2) processRequestsPerSub(
 	startBalance *big.Int,
 	reqs []pendingRequest,
 ) map[string]struct{} {
-	if lsn.cfg.FeatureVRFBatchFulfillments() && lsn.batchCoordinator != nil {
+	if lsn.cfg.VRFBatchFulfillmentsFeatureEnabled() && lsn.batchCoordinator != nil {
 		return lsn.processRequestsPerSubBatch(subID, startBalance, reqs)
 	}
 

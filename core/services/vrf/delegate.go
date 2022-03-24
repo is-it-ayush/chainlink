@@ -45,7 +45,7 @@ type Config interface {
 	EvmGasLimitDefault() uint64
 	KeySpecificMaxGasPriceWei(addr common.Address) *big.Int
 	MinRequiredOutgoingConfirmations() uint64
-	FeatureVRFBatchFulfillments() bool
+	VRFBatchFulfillmentsFeatureEnabled() bool
 }
 
 func NewDelegate(
