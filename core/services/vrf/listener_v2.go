@@ -489,11 +489,15 @@ func (lsn *listenerV2) processRequestsPerSubBatch(
 			continue
 		}
 
+		// Bump the total gas limit by a bit so that we account for the overhead of the batch
+		// contract's calling.
+		totalGasLimitBumped := uint64(float64(totalGasLimit) * 1.15)
 		lggr.Infow("Enqueueing batch fulfillment",
 			"numRequestsInBatch", len(reqIDs),
 			"requestIDs", reqIDs,
 			"totalGasLimit", totalGasLimit,
 			"linkBalance", startBalanceNoReserveLink,
+			"totalGasLimitBumped", totalGasLimitBumped,
 		)
 		err = lsn.q.Transaction(func(tx pg.Queryer) error {
 			for _, run := range runs {
@@ -517,7 +521,7 @@ func (lsn *listenerV2) processRequestsPerSubBatch(
 				FromAddress:      fromAddress,
 				ToAddress:        lsn.batchCoordinator.Address(),
 				EncodedPayload:   payload,
-				GasLimit:         totalGasLimit,
+				GasLimit:         totalGasLimitBumped,
 				MinConfirmations: null.Uint32From(uint32(lsn.cfg.MinRequiredOutgoingConfirmations())),
 				Strategy:         txmgr.NewSendEveryStrategy(),
 				Meta: &txmgr.EthTxMeta{
