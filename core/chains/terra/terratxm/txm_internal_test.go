@@ -73,7 +73,7 @@ func TestTxm(t *testing.T) {
 		txm := NewTxm(db, tcFn, *gpe, chainID, cfg, ks.Terra(), lggr, logCfg, nil)
 
 		// Enqueue a single msg, then send it in a batch
-		id1, err := txm.Enqueue(contract.String(), generateExecuteMsg(t, []byte(`1`), sender1, contract))
+		id1, err := txm.Enqueue(contract.String(), generateExecuteMsg(t, []byte(`1`), sender1, contract), 0)
 		require.NoError(t, err)
 		tc.On("Account", mock.Anything).Return(uint64(0), uint64(0), nil)
 		tc.On("BatchSimulateUnsigned", mock.Anything, mock.Anything).Return(&terraclient.BatchSimResults{
@@ -112,9 +112,9 @@ func TestTxm(t *testing.T) {
 		tcFn := func() (terraclient.ReaderWriter, error) { return tc, nil }
 		txm := NewTxm(db, tcFn, *gpe, chainID, cfg, ks.Terra(), lggr, pgtest.NewPGCfg(true), nil)
 
-		id1, err := txm.Enqueue(contract.String(), generateExecuteMsg(t, []byte(`0`), sender1, contract))
+		id1, err := txm.Enqueue(contract.String(), generateExecuteMsg(t, []byte(`0`), sender1, contract), 0)
 		require.NoError(t, err)
-		id2, err := txm.Enqueue(contract.String(), generateExecuteMsg(t, []byte(`1`), sender2, contract))
+		id2, err := txm.Enqueue(contract.String(), generateExecuteMsg(t, []byte(`1`), sender2, contract), 0)
 		require.NoError(t, err)
 		ids := []int64{id1, id2}
 		senders := []string{sender1.String(), sender2.String()}

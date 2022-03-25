@@ -91,7 +91,7 @@ func (tc *TerraTransfersController) Create(c *gin.Context) {
 	}
 
 	sendMsg := bank.NewMsgSend(tr.FromAddress, tr.DestinationAddress, sdk.Coins{coin})
-	msgID, err := txm.Enqueue("", sendMsg)
+	msgID, err := txm.Enqueue("", sendMsg, 0)
 	if err != nil {
 		jsonAPIError(c, http.StatusInternalServerError, errors.Errorf("transaction failed: %v", err))
 		return

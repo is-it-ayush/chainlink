@@ -87,3 +87,11 @@ func (o *ORM) UpdateMsgs(ids []int64, state db.State, txHash *string, qopts ...p
 	}
 	return nil
 }
+
+// TryReplaceMsg updates a msg's state to db.Replaced, but only if it is still db.Unstarted.
+// This update may not 'stick', since an in-progress broadcast would overwrite.
+func (o *ORM) TryReplaceMsg(id int64, qopts ...pg.QOpt) error {
+	q := o.q.WithOpts(qopts...)
+	_, err := q.Exec(`UPDATE terra_msgs SET state = $1, updated_at = NOW() WHERE id = $2 and state = $3`, db.Replaced, id, db.Unstarted)
+	return err
+}

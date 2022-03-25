@@ -395,7 +395,7 @@ func (txm *Txm) confirmTx(ctx context.Context, tc terraclient.Reader, txHash str
 }
 
 // Enqueue enqueue a msg destined for the terra chain.
-func (txm *Txm) Enqueue(contractID string, msg sdk.Msg) (int64, error) {
+func (txm *Txm) Enqueue(contractID string, msg sdk.Msg, replaceId int64) (int64, error) {
 	switch ms := msg.(type) {
 	case *wasmtypes.MsgExecuteContract:
 		_, err := sdk.AccAddressFromBech32(ms.Sender)
@@ -425,7 +425,13 @@ func (txm *Txm) Enqueue(contractID string, msg sdk.Msg) (int64, error) {
 	// introduce another network call and essentially double
 	// the enqueue time. Enqueue is used in the context of OCRs Transmit
 	// and must be fast, so we do the minimum of a db write.
-	return txm.orm.InsertMsg(contractID, typeURL, raw)
+	id, err := txm.orm.InsertMsg(contractID, typeURL, raw)
+	if err == nil && replaceId > 0 {
+		if rerr := txm.orm.TryReplaceMsg(id); rerr != nil {
+			txm.lggr.Warnw("failed to replace message", "id", id, "err", err)
+		}
+	}
+	return id, err
 }
 
 // GetMsgs returns any messages matching ids.
